@@ -7,116 +7,194 @@ from sklearn import model_selection
 import lightgbm as lgb
 import datetime
 import math
+import tensorflow as tf
 import statistics
 import glob
 import pickle
+import random
+import h5py
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, ELU, Softmax, Flatten
+from keras import optimizers, losses, metrics
+from keras import callbacks
+import keras
+
+from sklearn.preprocessing import OneHotEncoder
+
 
 path = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
 start_time = time.time()
-MAX_ROUNDS = 250
+MAX_ROUNDS = 1000
+
+class_weight = {0 : 1,
+    1: 390}
 
 params = {
     'num_leaves': 31,
     'objective': 'binary',
-    'min_data_in_leaf': 25,
+    'min_data_in_leaf': 100,
     'learning_rate': 0.1,
     'feature_fraction': 1.0,
     'bagging_fraction': 0.8,
-    'bagging_freq': 3,
+    'bagging_freq': 2,
     'metric': 'auc',
-    'num_threads': 4
+    'num_threads': 4,
+    'scale_pos_weight':389
 }
 
 
+def print_sample():
+    df = pd.read_csv(path + "train.csv", nrows=500000)
+    df = preproccess_df(df)
+    positives = df.loc[df['is_attributed'] == 1]
+    negatives = df.loc[df['is_attributed'] == 0]
+    print(negatives.shape[0]/positives.shape[0])
+    negatives = negatives.sample(n=max(positives.shape))
+    output = pd.concat([positives, negatives])
+    output.to_csv('sample.csv')
+
+
 def preproccess_df(df):
-    print(df.columns)
+    print(df.shape, df.columns)
+    df['counting_column'] = 1
+
     df['click_hour'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').hour)
+    df['click_hour'] /= 24
+    df['click_day'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').day)
+    df['click_day'] /= 31
     df['click_minute'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').minute)
-    df['click_time'] = pd.to_datetime(df['click_time']).dt.date
-    df['click_time'] = df['click_time'].apply(lambda x: x.strftime('%Y%m%d')).astype(int)
-    print('time added')
+    df['click_minute'] /= 60 #TODO: change to 60 on new models
+    df['click_time'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').timestamp())
+    print('time added', df.shape)
+
+    df['os'] /= 1.0
+    df['device'] /= 1.0
+
+    df_ip = df.groupby(['ip', 'device', 'os', 'click_hour', 'click_day']).count().add_suffix('_count').reset_index()
+    df_ip = df_ip[['ip', 'device', 'os', 'click_hour', 'click_day', 'counting_column_count']]
+    df_ip = df_ip.sort_values(by='counting_column_count')
+    df_ip['ip_app_os_hour_rank'] = df_ip['counting_column_count'].rank(method='dense')
+    max_ip_rank = max(df_ip['ip_app_os_hour_rank'])
+    df_ip['ip_app_os_hour_rank'] /= max_ip_rank
+    df_ip = df_ip[['ip', 'device', 'os', 'click_hour', 'click_day', 'ip_app_os_hour_rank']]
+    df = df.merge(df_ip, on=['ip', 'device', 'os','click_day', 'click_hour'])
+    del df_ip
+    print('ip_app added', df.shape)
 
     df_ip = df.groupby(['ip', 'app']).count().add_suffix('_count').reset_index()
-    df_ip = df_ip[['ip', 'app', 'device_count']]
-    df_ip = df_ip.sort_values(by='device_count')
-    df_ip['ip_app_rank'] = df_ip['device_count'].rank(method='dense')
+    df_ip = df_ip[['ip', 'app', 'counting_column_count']]
+    df_ip = df_ip.sort_values(by='counting_column_count')
+    df_ip['ip_app_rank'] = df_ip['counting_column_count'].rank(method='dense')
     max_ip_rank = max(df_ip['ip_app_rank'])
     df_ip['ip_app_rank'] /= max_ip_rank
-    df = df.merge(df_ip, how='left', on=['ip', 'app'])
+    df_ip = df_ip[['ip', 'app', 'ip_app_rank']]
+    df = df.merge(df_ip, on=['ip', 'app'])
     del df_ip
-    print('ip_app added')
+    print('ip_app added', df.shape)
 
     df_ip = df.groupby(['ip', 'channel']).count().add_suffix('_count').reset_index()
-    df_ip = df_ip[['ip', 'channel', 'device_count']]
-    df_ip = df_ip.sort_values(by='device_count')
-    df_ip['ip_channel_rank'] = df_ip['device_count'].rank(method='dense')
+    df_ip = df_ip[['ip', 'channel', 'counting_column_count']]
+    df_ip = df_ip.sort_values(by='counting_column_count')
+    df_ip['ip_channel_rank'] = df_ip['counting_column_count'].rank(method='dense')
     max_ip_rank = max(df_ip['ip_channel_rank'])
     df_ip['ip_channel_rank'] /= max_ip_rank
-    df = df.merge(df_ip, how='left', on=['ip', 'channel'])
+    df_ip = df_ip[['ip', 'channel', 'ip_channel_rank']]
+    df = df.merge(df_ip, on=['ip', 'channel'])
     del df_ip
-    print('ip_channel added')
+    print('ip_channel added', df.shape)
 
     df = df.sort_values(by=['app', 'channel'])
 
     df_ip = df.groupby(['app', 'channel']).count().add_suffix('_count').reset_index()
-    df_ip = df_ip[['app', 'channel', 'device_count']]
-    df_ip = df_ip.sort_values(by='device_count')
-    df_ip['app_channel_rank'] = df_ip['device_count'].rank(method='dense')
+    df_ip = df_ip[['app', 'channel', 'counting_column_count']]
+    df_ip = df_ip.sort_values(by='counting_column_count')
+    df_ip['app_channel_rank'] = df_ip['counting_column_count'].rank(method='dense')
     max_ip_rank = max(df_ip['app_channel_rank'])
     df_ip['app_channel_rank'] /= max_ip_rank
-    df = df.merge(df_ip, how='left', on=['app', 'channel'])
+    df_ip = df_ip[['app', 'channel', 'app_channel_rank']]
+    df = df.merge(df_ip, on=['app', 'channel'])
     del df_ip
-    print('app_channel added')
+    print('app_channel added', df.shape)
 
     df = df.sort_values(by=['ip', 'app', 'channel'])
     df_ip = df.groupby(['ip', 'app', 'channel']).count().add_suffix('_count').reset_index()
-    df_ip = df_ip[['ip','app', 'channel', 'device_count']]
-    df_ip = df_ip.sort_values(by='device_count')
-    df_ip['ip_app_channel_rank'] = df_ip['device_count'].rank(method='dense')
+    df_ip = df_ip[['ip','app', 'channel', 'counting_column_count']]
+    df_ip = df_ip.sort_values(by='counting_column_count')
+    df_ip['ip_app_channel_rank'] = df_ip['counting_column_count'].rank(method='dense')
     max_ip_rank = max(df_ip['ip_app_channel_rank'])
     df_ip['ip_app_channel_rank'] /= max_ip_rank
-    df = df.merge(df_ip, how='left', on=['ip', 'app', 'channel'])
+    df_ip = df_ip[['ip', 'app', 'channel', 'ip_app_channel_rank']]
+    df = df.merge(df_ip, on=['ip', 'app', 'channel'])
     del df_ip
-    print('app_channel added')
+    print('app_channel added', df.shape)
 
     df_ip = df.groupby(['ip']).count().add_suffix('_count').reset_index()
-    df_ip = df_ip[['ip', 'app_count']]
-    df_ip = df_ip.sort_values(by='app_count')
-    df_ip['ip_rank'] = df_ip['app_count'].rank(method='dense')
+    df_ip = df_ip[['ip', 'counting_column_count']]
+    df_ip = df_ip.sort_values(by='counting_column_count')
+    df_ip['ip_rank'] = df_ip['counting_column_count'].rank(method='dense')
     max_ip_rank = max(df_ip['ip_rank'])
     df_ip['ip_rank'] /= max_ip_rank
-
-    df = df.merge(df_ip, how='left', on='ip')
+    df_ip = df_ip[['ip', 'ip_rank']]
+    df = df.merge(df_ip, on='ip')
     del df_ip
-    print('ip added')
+    print('ip added', df.shape)
 
     df_app = df.groupby(['app']).count().add_suffix('_count').reset_index()
-    df_app = df_app[['app', 'channel_count']]
-    df_app = df_app.sort_values(by='channel_count')
-    df_app['app_rank'] = df_app['channel_count'].rank(method='dense')
+    df_app = df_app[['app', 'counting_column_count']]
+    df_app = df_app.sort_values(by='counting_column_count')
+    df_app['app_rank'] = df_app['counting_column_count'].rank(method='dense')
     max_app_rank = max(df_app['app_rank'])
     df_app['app_rank'] /= max_app_rank
-
-    df = df.merge(df_app, how='left', on='app')
+    df_app = df_app[['app', 'app_rank']]
+    df = df.merge(df_app, on='app')
     del df_app
-    print('app added')
+    print('app added', df.shape)
 
     df_channel = df.groupby(['channel']).count().add_suffix('_count').reset_index()
-    df_channel = df_channel[['channel', 'app_count']]
-    df_channel = df_channel.sort_values(by='app_count')
-    df_channel['channel_rank'] = df_channel['app_count'].rank(method='dense')
-    max_channel_rank = max(df_channel['channel_rank'])
+    df_channel = df_channel[['channel', 'counting_column_count']]
+    df_channel = df_channel.sort_values(by='counting_column_count')
+    df_channel['channel_rank'] = df_channel['counting_column_count'].rank(method='dense')
+    max_channel_rank = max(df_channel['counting_column_count'])
     df_channel['channel_rank'] /= max_channel_rank
-
-    df = df.merge(df_channel, how='left', on='channel')
+    df_channel = df_channel[['channel', 'channel_rank']]
+    df = df.merge(df_channel, on='channel')
     del df_channel
-    print('channel added')
+    print('channel added', df.shape)
 
+    df_os = df.groupby(['os']).count().add_suffix('_count').reset_index()
+    df_os = df_os[['os', 'counting_column_count']]
+    df_os = df_os.sort_values(by='counting_column_count')
+    df_os['os_rank'] = df_os['counting_column_count'].rank(method='dense')
+    max_os = max(df_os['os_rank'])
+    df_os['os_rank'] /= max_os
+    df_os = df_os[['os', 'os_rank']]
+    df = df.merge(df_os, on='os')
+    del df_os
+    print('channel added', df.shape)
+
+    print(df.columns)
+
+    df = df.drop(['ip', 'app', 'os', 'channel','click_time', 'counting_column'], axis=1)
+    #df.drop(['counting_column'], axis=1, inplace=True)
     return df
 
+def get_nn(df):
+    model = Sequential()
+    model.add(Dense(64, activation='elu', input_shape=(df.shape[1],)))
+    model.add(Dropout(0.2))
+    model.add(Dense(64, activation='elu'))
+    model.add(Dropout(0.2))
+    model.add(Dense(16, activation='elu'))
+    model.add(Dropout(0.2))
+    model.add(Dense(2, activation='softmax'))
+    model.compile(loss='categorical_crossentropy',
+                 optimizer=optimizers.RMSprop(),
+                 metrics=['accuracy'])
+    return model
 
-def train_l1_models(sample_size = 10000000, num_of_chunks = 15):
+
+def train_l1_models(sample_size = 50000000, num_of_chunks = 3):
     models = []
     starting_columns = []
     train_raw = pd.read_csv(path + "train.csv")
@@ -131,29 +209,38 @@ def train_l1_models(sample_size = 10000000, num_of_chunks = 15):
         y = train['is_attributed']
         train.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
 
+        x1, x2, y1, y2 = model_selection.train_test_split(train, y, test_size=0.2, shuffle=True)
 
         print('[{}] Start LGBM Training'.format(time.time() - start_time))
-        MAX_ROUNDS = 250
-
-        x1, x2, y1, y2 = model_selection.train_test_split(train, y, test_size=0.25, shuffle=True)
-
         dtrain = lgb.Dataset(x1, label=y1)
         dval = lgb.Dataset(x2, label=y2, reference=dtrain)
 
-        model = lgb.train(params, dtrain, num_boost_round=MAX_ROUNDS, valid_sets=[dtrain, dval],
-                          early_stopping_rounds=50,
-                          verbose_eval=10)
+        lgbm_model1 = lgb.train(params, dtrain, num_boost_round=MAX_ROUNDS, valid_sets=[dtrain, dval],
+                          early_stopping_rounds=50, verbose_eval=10)
 
         print('[{0}] Finish LGBM Training, {1}'.format(time.time() - start_time, 1))
 
-        with open(path + 'model_{0}.plk'.format(i), 'wb') as infile:
-            pickle.dump(model, infile)
+        with open(path + 'l1/model1_{0}.plk'.format(i), 'wb') as infile:
+            pickle.dump(lgbm_model1, infile)
 
-        del train
-        models.append(model)
+        x3 = x1.as_matrix()
+        y3 = np.expand_dims(y1.as_matrix(), 1)
+        x4 = x2.as_matrix()
+        y4 = np.expand_dims(y2.as_matrix(), 1)
+        del x1, x2, lgbm_model1, train
+        y3 = keras.utils.to_categorical(y3, 2)
+        y4 = keras.utils.to_categorical(y4, 2)
+
+
+        print(x3.shape, y3.shape)
+
+        nn_model = get_nn(x3)
+        nn_model.fit(x3, y3, epochs=2, class_weight=class_weight, verbose=0)
+        print('nn trained:', nn_model.evaluate(x4,y4, verbose=0))
+        nn_model.save(path + 'l1/model_nn_{0}.h5'.format(i))
+        del nn_model
     l2_input = train_raw.loc[150000000:]
     l2_input.columns = starting_columns
-    return models, l2_input
 
 
 def load_models():
@@ -167,37 +254,102 @@ def load_models():
        'is_attributed']
     return models, train_raw
 
-def chunk_predictions():
-    pass
 
-l1_test = pd.DataFrame()
-l1_train = pd.DataFrame()
-sub = pd.DataFrame()
+def get_l1_predictions(start_index):
+    model_locs = glob.glob(path + 'l1/*.plk')
+    model_locs_nn = glob.glob(path + 'l1/*.h5')
 
-models, train_2 = train_l1_models()
-#models,train_2 = load_models()
+    df = pd.read_csv(path + "train.csv", skiprows=start_index)
+    df.columns = ['ip', 'app', 'device', 'os', 'channel', 'click_time', 'attributed_time',
+                         'is_attributed']
+    df = preproccess_df(df)
+    y = df['is_attributed']
+    df.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
+    chunk_result = pd.DataFrame()
 
-train_2 = preproccess_df(train_2)
-y = train_2['is_attributed']
-train_2.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
+    for count, m in enumerate(model_locs):
+        with open(m, 'rb') as infile:
+            model = pickle.load(infile)
+        chunk_result['is_attributed_{0}'.format(count)] = model.predict(df, num_iteration=model.best_iteration or MAX_ROUNDS)
+    for count, m in enumerate(model_locs_nn):
+        model = keras.models.load_model(m)
+        chunk_result['is_attributed_nn_{0}'.format(count)] = model.predict(df)[:,0]
+    start_index += max(df.shape)
 
-for count, i in enumerate(models):
-    l1_train['is_attributed_{0}'.format(count)] = i.predict(train_2, num_iteration=i.best_iteration or MAX_ROUNDS)
+    return chunk_result, y
 
-x1, x2, y1, y2 = model_selection.train_test_split(l1_train, y, test_size=0.2, shuffle=True)
-dtrain = lgb.Dataset(x1, label=y1)
-dval = lgb.Dataset(x2, label=y2, reference=dtrain)
-model = lgb.train(params, dtrain, num_boost_round=MAX_ROUNDS, valid_sets=[dtrain, dval],
+
+def chunk_test_predictions(df):
+    model_locs = glob.glob(path + 'l1/*.plk')
+    model_locs_nn = glob.glob(path + 'l1/*.h5')
+    predictions = []
+
+
+    chunk_result = pd.DataFrame()
+    for count, m in enumerate(model_locs):
+        with open(m, 'rb') as infile:
+            model = pickle.load(infile)
+        chunk_result['is_attributed_{0}'.format(count)] = model.predict(df,num_iteration=model.best_iteration or MAX_ROUNDS)
+    for count, m in enumerate(model_locs_nn):
+        model = keras.models.load_model(m)
+        chunk_result['is_attributed_nn_{0}'.format(count)] = model.predict(df)[:,0]
+
+    # while df is None or max(df.shape) == chunk_size:
+    #     df = pd.read_csv(path + "test.csv", nrows=chunk_size)
+    #     df.columns = ['ip', 'app', 'device', 'os', 'channel', 'click_time', 'attributed_time',
+    #                          'is_attributed']
+    #     df = preproccess_df(df)
+    #
+    #     df.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
+    #
+    #     chunk_result = pd.DataFrame()
+    #
+    #     for count, m in enumerate(model_locs):
+    #         with open(m, 'rb') as infile:
+    #             model = pickle.load(infile)
+    #         chunk_result['is_attributed_{0}'.format(count)] = model.predict(df, num_iteration=model.best_iteration or MAX_ROUNDS)
+    #     predictions.append(chunk_result)
+    # predictions = pd.concat(predictions)
+    return chunk_result
+
+
+def get_l2_model():
+    if len(glob.glob(path + 'l2/*.plk')) == 0:
+
+        train_l1_models()
+        x, y = get_l1_predictions(150000000)
+        x1, x2, y1, y2 = model_selection.train_test_split(x, y, test_size=0.1, shuffle=True)
+        dtrain = lgb.Dataset(x1, label=y1)
+        dval = lgb.Dataset(x2, label=y2, reference=dtrain)
+        model = lgb.train(params, dtrain, num_boost_round=MAX_ROUNDS, valid_sets=[dtrain, dval],
                           early_stopping_rounds=50, verbose_eval=10)
+        with open(path + 'l2/model.plk', 'wb') as infile:
+            pickle.dump(model, infile)
+    else:
+        model_loc = glob.glob(path + 'l2/*.plk')[0]
+        with open(model_loc, 'rb') as infile:
+            model = pickle.load(infile)
+    return model
 
 
-test = pd.read_csv(path + "test.csv")
-test = preproccess_df(test)
-sub['click_id'] = test['click_id']
-test.drop('click_id', axis=1, inplace=True)
+def main():
+    l1_test = pd.DataFrame()
+    l1_train = pd.DataFrame()
+    sub = pd.DataFrame()
 
-for count, i in enumerate(models):
-    l1_test['is_attributed_{0}'.format(count)] = i.predict(test, num_iteration=i.best_iteration or MAX_ROUNDS)
+    model = get_l2_model()
 
-sub['is_attributed'] = model.predict(l1_test, num_iteration=model.best_iteration or MAX_ROUNDS)
-sub.to_csv('lgb_sub.csv', index=False)
+    test = pd.read_csv(path + "test.csv")
+    test = preproccess_df(test)
+    sub['click_id'] = test['click_id']
+    test.drop('click_id', axis=1, inplace=True)
+
+    x = chunk_test_predictions(test)
+
+    sub['is_attributed'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
+    sub.to_csv('lgb_sub.csv', index=False)
+
+
+if __name__ == '__main__':
+    main()
+    #print_sample()
