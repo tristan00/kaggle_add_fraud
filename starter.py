@@ -4,11 +4,58 @@ from sklearn import linear_model
 from sklearn import ensemble
 from sklearn import neighbors
 from sklearn import neural_network
+import datetime
+import itertools
 
 file_locs = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
+init_dtype = {
+        'ip'            : 'uint32',
+        'app'           : 'uint16',
+        'device'        : 'uint16',
+        'os'            : 'uint16',
+        'channel'       : 'uint16',
+        'is_attributed' : 'uint8',
+        }
+
+def rank_df(df, columns, name):
+    print(columns)
+    df2 = df.groupby(columns).count().add_suffix('_count').reset_index()
+    df2 = df2[columns + ['counting_column_count']]
+    df2[name] = df2['counting_column_count'].rank(method='dense')
+    max_rank = max(df2[name])
+    df2[name] /= max_rank
+    df2 = df2[columns + [name]]
+    df = df.merge(df2, on=columns)
+    return df
+
 #add features
 def preproccess_df(df):
+    print(df.shape, df.columns)
+    df['counting_column'] = 1
+
+    df['click_hour'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').hour)
+    df['click_hour'] /= 24
+    df['click_day'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').day)
+    df['click_day'] /= 31
+    df['click_minute'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').minute)
+    df['click_minute'] /= 60 #TODO: change to 60 on new models
+    df['click_time'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').timestamp())
+    print('time added', df.shape)
+
+    df['os'] /= 1.0
+    df['device'] /= 1.0
+
+    possible_names = ['ip', 'device', 'os', 'channel', 'click_hour', 'click_day']
+
+    for l in range(len(possible_names)):
+        combinations = itertools.combinations(possible_names, l+1)
+        for i in combinations:
+            df = rank_df(df, list(i), '_'.join(i)+'_rank')
+            print(df.shape, df.columns)
+
+    df = df.drop(['ip', 'device', 'os', 'channel','click_time', 'counting_column'], axis=1)
+    #df.drop(['counting_column'], axis=1, inplace=True)
     return df
 
 # you can test on sample 20 mil records, easier to manage memory for testing, final solution should use everything

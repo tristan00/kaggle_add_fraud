@@ -43,6 +43,15 @@ params = {
     'scale_pos_weight':389
 }
 
+init_dtype = {
+        'ip'            : 'uint32',
+        'app'           : 'uint16',
+        'device'        : 'uint16',
+        'os'            : 'uint16',
+        'channel'       : 'uint16',
+        'is_attributed' : 'uint8',
+        }
+
 
 def print_sample():
     df = pd.read_csv(path + "train.csv", nrows=500000)
@@ -197,7 +206,7 @@ def get_nn(df):
 def train_l1_models(sample_size = 50000000, num_of_chunks = 3):
     models = []
     starting_columns = []
-    train_raw = pd.read_csv(path + "train.csv")
+    train_raw = pd.read_csv(path + "train.csv", dtype=init_dtype)
     for i in range(num_of_chunks):
         train = train_raw.loc[(i)*sample_size:(i  + 1)*sample_size].copy()
         if 'click_time' not in starting_columns:
@@ -249,7 +258,7 @@ def load_models():
     for m in model_locs:
         with open(m, 'rb') as infile:
             models.append(pickle.load(infile))
-    train_raw = pd.read_csv(path + "train.csv", skiprows=150000000)
+    train_raw = pd.read_csv(path + "train.csv", skiprows=150000000, dtype=init_dtype)
     train_raw.columns = ['ip', 'app', 'device', 'os', 'channel', 'click_time', 'attributed_time',
        'is_attributed']
     return models, train_raw
@@ -259,7 +268,7 @@ def get_l1_predictions(start_index):
     model_locs = glob.glob(path + 'l1/*.plk')
     model_locs_nn = glob.glob(path + 'l1/*.h5')
 
-    df = pd.read_csv(path + "train.csv", skiprows=start_index)
+    df = pd.read_csv(path + "train.csv", skiprows=start_index, dtype=init_dtype)
     df.columns = ['ip', 'app', 'device', 'os', 'channel', 'click_time', 'attributed_time',
                          'is_attributed']
     df = preproccess_df(df)
@@ -339,7 +348,7 @@ def main():
 
     model = get_l2_model()
 
-    test = pd.read_csv(path + "test.csv")
+    test = pd.read_csv(path + "test.csv", dtype=init_dtype)
     test = preproccess_df(test)
     sub['click_id'] = test['click_id']
     test.drop('click_id', axis=1, inplace=True)
