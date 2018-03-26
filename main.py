@@ -17,11 +17,12 @@ import random
 import h5py
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, ELU, Softmax, Flatten
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neighbors import KNeighborsClassifier, RadiusNeighborsClassifier
 from keras import optimizers, losses, metrics
 from keras import callbacks
 import keras
 from keras import backend as K
+import os
 import itertools
 
 
@@ -31,7 +32,7 @@ from sklearn.preprocessing import OneHotEncoder
 path = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
 start_time = time.time()
-MAX_ROUNDS = 1000
+MAX_ROUNDS = 2000
 
 class_weight = {0 : 1,
     1: 390}
@@ -129,21 +130,22 @@ def auc(y_true, y_pred):
     return auc
 
 def train_l1_models():
-    chunk_size = 20000000
-    num_of_chunks = 6
+    chunk_size = 30000000
+    num_of_chunks = 3
     models = []
 
     train_raw = pd.read_csv(path + "train.csv", nrows=2, dtype=init_dtype)
     starting_columns = train_raw.columns
 
-    val = pd.read_csv(path + "train.csv", skiprows=chunk_size*4, nrows=chunk_size, dtype=init_dtype)
+    val = pd.read_csv(path + "train.csv", skiprows=chunk_size*num_of_chunks, nrows=chunk_size, dtype=init_dtype)
     val.columns = starting_columns
     val = preproccess_df(val)
     y_val = val['is_attributed']
     val.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
 
-    for i in range(num_of_chunks - 1):
+    for i in range(num_of_chunks):
         train_raw = pd.read_csv(path + "train.csv", nrows=chunk_size, skiprows=i*chunk_size, dtype=init_dtype)
+        train_raw.columns = starting_columns
         print('[{0}] Finished to load data'.format(time.time() - start_time))
         train = preproccess_df(train_raw)
         y_train = train['is_attributed']
@@ -169,25 +171,25 @@ def train_l1_models():
         print(x3.shape, y3.shape)
 
         nn_model = get_nn(x3)
-        nn_model.fit(x3, y3, epochs=6, class_weight=class_weight, verbose=1, batch_size=20000)
+        nn_model.fit(x3, y3, epochs=5, class_weight=class_weight, verbose=0, batch_size=20000)
         print('nn trained:', nn_model.evaluate(x4,y4, verbose=0))
         nn_model.save(path + 'l1/model_nn_{0}.h5'.format(i))
         del nn_model
 
-        # gb = ensemble.GradientBoostingClassifier()
-        # gb.fit(train,y_train)
-        # print('gb', gb.score(val, y_val))
-        # with open(path + 'l1/gb_{0}.plk'.format(i), 'wb') as infile:
-        #     pickle.dump(gb, infile)
-        # del gb
-        #
-        # ada = ensemble.AdaBoostClassifier()
-        # ada.fit(train, y_train)
-        # print('ada', ada.score(val, y_val))
-        # with open(path + 'l1/ada_{0}.plk'.format(i), 'wb') as infile:
-        #     pickle.dump(ada, infile)
-        #
-        # del ada
+        gb = ensemble.GradientBoostingClassifier()
+        gb.fit(train,y_train)
+        print('gb', gb.score(val, y_val))
+        with open(path + 'l1/gb_{0}.plk'.format(i), 'wb') as infile:
+            pickle.dump(gb, infile)
+        del gb
+
+        ada = ensemble.AdaBoostClassifier()
+        ada.fit(train, y_train)
+        print('ada', ada.score(val, y_val))
+        with open(path + 'l1/ada_{0}.plk'.format(i), 'wb') as infile:
+            pickle.dump(ada, infile)
+
+        del ada
 
         rf = ensemble.RandomForestClassifier(class_weight=class_weight,n_jobs=-1)
         rf.fit(train, y_train)
@@ -199,17 +201,25 @@ def train_l1_models():
 
         et = ensemble.ExtraTreesClassifier(class_weight=class_weight,n_jobs=-1)
         et.fit(train, y_train)
-        print('et', et.score(val, y_val))
+        print('et', et.score(val, y_val, ))
         with open(path + 'l1/et_{0}.plk'.format(i), 'wb') as infile:
             pickle.dump(et, infile)
 
         del et
-        #
+
         # k = KNeighborsClassifier(n_jobs=-1)
         # k.fit(train, y_train)
         # print('k', k.score(val, y_val))
         # with open(path + 'l1/k_{0}.plk'.format(i), 'wb') as infile:
         #     pickle.dump(k, infile)
+        #
+        # del k
+        #
+        # r = RadiusNeighborsClassifier(n_jobs=-1)
+        # r.fit(train, y_train)
+        # print('r', r.score(val, y_val))
+        # with open(path + 'l1/r_{0}.plk'.format(i), 'wb') as infile:
+        #     pickle.dump(r, infile)
         #
         # del k
 
@@ -218,7 +228,7 @@ def train_l1_models():
     # print('k', svc.score(val, y_val))
     # with open(path + 'l1/svc.plk', 'wb') as infile:
     #     pickle.dump(svc, infile)
-    return chunk_size*num_of_chunks
+    return chunk_size*(num_of_chunks + 1)
 
 
 
@@ -239,6 +249,7 @@ def get_l1_predictions(start_index):
     model_locs_nn = glob.glob(path + 'l1/*.h5')
 
     df = pd.read_csv(path + "train.csv", skiprows=start_index, dtype=init_dtype)
+    #df = pd.read_csv(path + "train.csv", nrows=start_index, dtype=init_dtype)
     df.columns = ['ip', 'app', 'device', 'os', 'channel', 'click_time', 'attributed_time',
                          'is_attributed']
     df = preproccess_df(df)
@@ -249,10 +260,15 @@ def get_l1_predictions(start_index):
     for count, m in enumerate(model_locs):
         with open(m, 'rb') as infile:
             model = pickle.load(infile)
-        chunk_result['is_attributed_{0}'.format(count)] = model.predict(df)
+        try:
+            chunk_result[os.path.basename(m).split('.')[0]] = model.predict(df,num_iteration=model.best_iteration or MAX_ROUNDS)
+        except:
+            chunk_result[os.path.basename(m).split('.')[0]] = model.predict(df)
     for count, m in enumerate(model_locs_nn):
-        model = keras.models.load_model(m)
-        chunk_result['is_attributed_nn_{0}'.format(count)] = model.predict(df)[:,0]
+        model = keras.models.load_model(m, custom_objects={'auc':auc})
+        chunk_result[os.path.basename(m).split('.')[0]] = model.predict(df)[:,0]
+
+    print(chunk_result.shape, chunk_result.columns)
     start_index += max(df.shape)
 
     return chunk_result, y
@@ -265,17 +281,20 @@ def chunk_test_predictions(df):
 
 
     chunk_result = pd.DataFrame()
+
+
     for count, m in enumerate(model_locs):
         with open(m, 'rb') as infile:
             model = pickle.load(infile)
         try:
-            chunk_result['is_attributed_{0}'.format(count)] = model.predict(df,num_iteration=model.best_iteration or MAX_ROUNDS)
+            chunk_result[os.path.basename(m).split('.')[0]] = model.predict(df,num_iteration=model.best_iteration or MAX_ROUNDS)
         except:
-            chunk_result['is_attributed_{0}'.format(count)] = model.predict(df)
+            chunk_result[os.path.basename(m).split('.')[0]] = model.predict(df)
     for count, m in enumerate(model_locs_nn):
-        model = keras.models.load_model(m)
-        chunk_result['is_attributed_nn_{0}'.format(count)] = model.predict(df)[:,0]
+        model = keras.models.load_model(m, custom_objects={'auc':auc})
+        chunk_result[os.path.basename(m).split('.')[0]] = model.predict(df)[:,0]
 
+    print(chunk_result.shape, chunk_result.columns)
     # while df is None or max(df.shape) == chunk_size:
     #     df = pd.read_csv(path + "test.csv", nrows=chunk_size)
     #     df.columns = ['ip', 'app', 'device', 'os', 'channel', 'click_time', 'attributed_time',
@@ -299,6 +318,7 @@ def get_l2_model():
     if len(glob.glob(path + 'l2/*.plk')) == 0:
 
         start = train_l1_models()
+        #start = 120000000
         x, y = get_l1_predictions(start)
         x1, x2, y1, y2 = model_selection.train_test_split(x, y, test_size=0.2, shuffle=True)
         dtrain = lgb.Dataset(x1, label=y1)
