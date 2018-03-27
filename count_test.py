@@ -99,6 +99,9 @@ def preproccess_df(df):
                 #df = count_df(df, list(i), '_'.join(i) + '_counter')
                 gc.collect()
 
+    count_lists = [['click_hour', 'click_day', 'ip', 'device', 'os'], ['click_hour', 'click_day', 'ip', 'device', 'os', 'app']]
+    for i in count_lists:
+        df = count_df(df, list(i), '_'.join(i) + '_counter')
     df = df.drop(['ip', 'device', 'os', 'channel','click_time', 'counting_column', 'click_day'], axis=1)
     print(df.shape)
     #df.drop(['counting_column'], axis=1, inplace=True)
