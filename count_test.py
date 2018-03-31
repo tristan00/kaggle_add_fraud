@@ -76,6 +76,13 @@ def count_df(df, columns, name):
     df[name] = df[name].astype('uint16')
     return df
 
+def time_between_df(df, columns, name):
+    print(columns)
+    df[name] = df.groupby(columns)['click_time'].diff()
+    df[name] = df[name].fillna(value=0)
+    df[name] = df[name].astype('uint16')
+    return df
+
 def preproccess_df(df):
     print(df.shape, df.columns)
     df['counting_column'] = 1
@@ -83,32 +90,33 @@ def preproccess_df(df):
     df['click_hour'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').hour).astype('uint8')
     df['click_day'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').day).astype('uint8')
     df['click_minute'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').minute).astype('uint8')
-    df['click_minute'] /= 60 #TODO: change to 60 on new models
+    #df['click_minute'] /= 60 #TODO: change to 60 on new models
     df['click_time'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').timestamp())
     print('time added', df.shape)
 
     possible_names = ['ip', 'device', 'os', 'channel', 'click_hour', 'click_day']
 
-    for l in range(len(possible_names)):
-        combinations = itertools.combinations(possible_names, l+1)
-        for i in combinations:
 
-            if len(set(['click_hour', 'click_day']) & set(i)) != 1 and len(
-                    set(['click_hour', 'click_day']) | set(i)) > 2:
-                df = rank_df(df, list(i), '_'.join(i)+'_rank')
-                #df = count_df(df, list(i), '_'.join(i) + '_counter')
-                gc.collect()
+    count_lists = [['ip'],
+                ['ip', 'device', 'os'],
+                ['click_hour', 'click_day', 'ip', 'device', 'os'],
+                   ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel'],
+                   ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel', 'app']]
 
-    count_lists = [['click_hour', 'click_day', 'ip', 'device', 'os'], ['click_hour', 'click_day', 'ip', 'device', 'os', 'app']]
+    print(time.time() - start_time)
     for i in count_lists:
         df = count_df(df, list(i), '_'.join(i) + '_counter')
-    df = df.drop(['ip', 'device', 'os', 'channel','click_time', 'counting_column', 'click_day'], axis=1)
+        print(time.time() - start_time)
+        df = rank_df(df, list(i), '_'.join(i) + '_rank')
+        print(time.time() - start_time)
+        #df = time_between_df(df, list(i), '_'.join(i) + '_diff')
+        print(time.time() - start_time)
+    df = df.drop(['ip','click_time', 'counting_column', 'click_day'], axis=1)
     print(df.shape)
     #df.drop(['counting_column'], axis=1, inplace=True)
     return df
 
 df = pd.read_csv(path + "train2.csv", dtype=init_dtype)
-
 
 train, val = model_selection.train_test_split(df, test_size=.4)
 del df
@@ -123,7 +131,7 @@ val.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
 
 dtrain = lgb.Dataset(train, label=y_train)
 dval = lgb.Dataset(val, label=y_val, reference=dtrain)
-model = lgb.train(params, dtrain, num_boost_round=MAX_ROUNDS, valid_sets=[dtrain, dval],early_stopping_rounds=50, verbose_eval=10)
+model = lgb.train(params, dtrain, num_boost_round=MAX_ROUNDS, valid_sets=[dtrain, dval],early_stopping_rounds=50, verbose_eval=10, categorical_feature=['device', 'os', 'channel', 'click_hour'])
 
 del y_train, train, y_val, val
 
