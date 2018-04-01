@@ -1,3 +1,5 @@
+import toolz
+import dask.dataframe as dd
 import pandas as pd
 from sklearn import model_selection
 from sklearn import linear_model
@@ -10,12 +12,12 @@ import itertools
 file_locs = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
 init_dtype = {
-        'ip'            : 'uint32',
-        'app'           : 'uint16',
-        'device'        : 'uint16',
-        'os'            : 'uint16',
-        'channel'       : 'uint16',
-        'is_attributed' : 'uint8',
+        'ip': 'uint32',
+        'app': 'uint16',
+        'device': 'uint16',
+        'os': 'uint16',
+        'channel': 'uint16',
+        'is_attributed': 'uint8',
         }
 
 def rank_df(df, columns, name):
@@ -31,15 +33,16 @@ def rank_df(df, columns, name):
 
 #add features
 def preproccess_df(df):
-    print(df.shape, df.columns)
     df['counting_column'] = 1
 
-    df['click_hour'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').hour).astype(int)
-    df['click_day'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').day).astype(int)
-    df['click_minute'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').minute).astype(int)
+    df['click_hour'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').hour, meta={})
+    df['click_hour'] /= 24
+    df['click_day'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').day)
+    df['click_day'] /= 31
+    df['click_minute'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').minute)
+    df['click_minute'] /= 60 #TODO: change to 60 on new models
     df['click_time'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').timestamp())
     print('time added', df.shape)
-
 
     df['os'] /= 1.0
     df['device'] /= 1.0
@@ -58,7 +61,7 @@ def preproccess_df(df):
 
 # you can test on sample 20 mil records, easier to manage memory for testing, final solution should use everything
 def get_training_set():
-    df = pd.read_csv(file_locs + 'train.csv', nrows=10000000)
+    df = dd.read_csv(file_locs + 'train.csv').head(n=1000)
     return df
 
 
@@ -79,10 +82,10 @@ def main():
     print(clf.score(x2, y2))
 
     #predict output
-    sub = pd.DataFrame()
-    test = pd.read_csv(file_locs + "test.csv")
+    test = dd.read_csv(file_locs + "test.csv")
     test = preproccess_df(test)
-    sub['click_id'] = test['click_id']
+    sub = test['click_id']
+    #sub['click_id'] = test['click_id']
     test.drop(['click_id', 'click_time'], axis=1, inplace=True)
     sub['is_attributed'] = clf.predict(test)
     sub.to_csv('lgb_sub.csv', index=False)

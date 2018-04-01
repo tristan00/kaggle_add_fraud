@@ -87,30 +87,36 @@ def preproccess_df(df):
     print(df.shape, df.columns)
     df['counting_column'] = 1
 
-    df['click_hour'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').hour).astype('uint8')
-    df['click_day'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').day).astype('uint8')
-    df['click_minute'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').minute).astype('uint8')
+    df['datetime'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S'))
+    df['click_hour'] = df['datetime'].apply(lambda x: x.hour).astype('uint8')
+    df['click_day'] = df['datetime'].apply(lambda x: x.day).astype('uint8')
+    df['click_minute'] = df['datetime'].apply(lambda x: x.minute).astype('uint8')
     #df['click_minute'] /= 60 #TODO: change to 60 on new models
-    df['click_time'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').timestamp())
+    df['click_time'] = df['datetime'].apply(lambda x: x.timestamp())
+    df = df.drop(['datetime'], axis = 1)
+
+    df['click_hour'] = df['click_hour'].apply(lambda x: 5 if x == 6 else 10 if x == 11 else 14)
+
+
     print('time added', df.shape)
 
-    possible_names = ['ip', 'device', 'os', 'channel', 'click_hour', 'click_day']
+    possible_names = ['ip', 'device', 'os', 'channel', 'click_hour']
 
+    for l in range(len(possible_names)):
+        combinations = itertools.combinations(possible_names, l+1)
+        for i in combinations:
+            df = rank_df(df, list(i), '_'.join(i)+'_rank')
 
-    count_lists = [['ip'],
-                ['ip', 'device', 'os'],
-                ['click_hour', 'click_day', 'ip', 'device', 'os'],
-                   ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel'],
-                   ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel', 'app']]
+    # count_lists = [
+    #             ['ip', 'device', 'os', 'channel', 'app'],
+    #             ['click_hour', 'click_day', 'ip', 'device', 'os'],
+    #                ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel'],
+    #                ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel', 'app']]
+    #
+    # print(time.time() - start_time)
+    # for i in count_lists:
+    #     df = rank_df(df, list(i), '_'.join(i) + '_rank')
 
-    print(time.time() - start_time)
-    for i in count_lists:
-        df = count_df(df, list(i), '_'.join(i) + '_counter')
-        print(time.time() - start_time)
-        df = rank_df(df, list(i), '_'.join(i) + '_rank')
-        print(time.time() - start_time)
-        #df = time_between_df(df, list(i), '_'.join(i) + '_diff')
-        print(time.time() - start_time)
     df = df.drop(['ip','click_time', 'counting_column', 'click_day'], axis=1)
     print(df.shape)
     #df.drop(['counting_column'], axis=1, inplace=True)
@@ -133,7 +139,18 @@ dtrain = lgb.Dataset(train, label=y_train)
 dval = lgb.Dataset(val, label=y_val, reference=dtrain)
 model = lgb.train(params, dtrain, num_boost_round=MAX_ROUNDS, valid_sets=[dtrain, dval],early_stopping_rounds=50, verbose_eval=10, categorical_feature=['device', 'os', 'channel', 'click_hour'])
 
+columns = train.columns
+f_i = model.feature_importance(importance_type='split')
+f_i2 = model.feature_importance(importance_type='gain')
+
+fi_df = pd.DataFrame(columns=columns)
+fi_df.loc[len(fi_df)] = f_i
+fi_df.loc[len(fi_df)] = f_i2
+fi_df.to_csv('f1.csv', index = False)
+
 del y_train, train, y_val, val
+
+
 
 sub = pd.DataFrame()
 

@@ -17,7 +17,7 @@ df = pd.read_csv(path + 'test.csv', dtype=init_dtype)
 df['click_hour'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S').hour)
 allowed_hours = set(df['click_hour'])
 del df
-
+allowed_hours = allowed_hours - set([6 , 11, 15])
 print(allowed_hours)
 
 df = pd.read_csv(path + 'train.csv', dtype=init_dtype)
