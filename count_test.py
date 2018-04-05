@@ -123,7 +123,7 @@ def add_outlier(df):
     output_array = []
     for count, ((_, i), (_, j)) in enumerate(zip(df_pre.iterrows(), df2.iterrows())):
         output_array.append(mean_squared_error(i, j))
-        if count % 1000 == 0:
+        if count % 100000 == 0:
             print('predicting outliers', count, time.time() - start_time)
     df['nn_score'] = np.array(output_array)
 
@@ -349,7 +349,7 @@ def main_wo_val():
 
     test = add_outlier(test)
     sub['is_attributed'] = model.predict(test, num_iteration=model.best_iteration or MAX_ROUNDS)
-    sub.to_csv('lgb_sub.gzip', index=False, compression='gzip')
+    sub.to_csv('lgb_sub.csv', index=False)
 
 if __name__ == '__main__':
     main_wo_val()
