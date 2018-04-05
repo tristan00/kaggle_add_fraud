@@ -47,7 +47,7 @@ params = {
     'bagging_freq': 2,
     'metric': 'auc',
     'num_threads': 4,
-    'scale_pos_weight':389
+    'scale_pos_weight':400
 }
 
 init_dtype = {
