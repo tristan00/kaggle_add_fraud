@@ -33,7 +33,7 @@ from sklearn.preprocessing import OneHotEncoder
 path = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
 start_time = time.time()
-MAX_ROUNDS = 200
+MAX_ROUNDS = 400
 
 params = {
     'num_leaves': 31,
@@ -93,11 +93,11 @@ def add_outlier(df):
     scaler = MinMaxScaler(feature_range=(0.0, 10.0))
     nn2_df = scaler.fit_transform(nn_df)
     try:
-        model = load_model(path + 'auto2.h5')
+        model = load_model(path + 'auto4.h5')
     except:
         model = get_autoencoder(nn_df)
         model.fit(nn2_df, nn2_df, epochs=1)
-        model.save(path + 'auto2.h5')
+        model.save(path + 'auto4.h5')
 
     # model = get_autoencoder(nn_df)
     # model.fit(nn2_df, nn2_df, epochs=1)
@@ -197,24 +197,25 @@ def preproccess_df(df):
 
     possible_names = ['ip', 'device', 'os', 'channel', 'click_day']
 
-    for l in range(len(possible_names)):
-        combinations = itertools.combinations(possible_names, l+1)
-        for i in combinations:
-            if 'click_day' not in i or len(i) == 1 or len(i) == 5:
-                continue
-            print(i, time.time() - start_time)
-            df = time_since_last(df, list(i), '_'.join(i)+'_next')
-            gc.collect()
-            # df = time_till_next(df, list(i), '_'.join(i) + '_last')
-            # gc.collect()
+    # for l in range(len(possible_names)):
+    #     combinations = itertools.combinations(possible_names, l+1)
+    #     for i in combinations:
+    #         if 'click_day' not in i or len(i) == 1 or len(i) == 5:
+    #             continue
+    #         print(i, time.time() - start_time)
+    #         df = time_since_last(df, list(i), '_'.join(i)+'_next')
+    #         gc.collect()
+    #         # df = time_till_next(df, list(i), '_'.join(i) + '_last')
+    #         # gc.collect()
 
 
     rank_list = [['ip', 'os', 'channel', 'click_day'],
                  ['ip', 'device', 'channel', 'click_day'],
                  ['ip', 'device', 'os', 'click_day']]
     for i in rank_list:
-        df = rank_df(df, list(i), '_'.join(i) + '_rank')
-        df = df.sort_values(by=['click_time'])
+        df = time_since_last(df, list(i), '_'.join(i) + '_last')
+        gc.collect()
+        df = time_till_next(df, list(i), '_'.join(i) + '_next')
         gc.collect()
 
 
@@ -321,6 +322,9 @@ def main_wo_val():
 
     train = add_outlier(train)
     gc.collect()
+
+    train.to_csv('training_data.csv', index=False, sep = '|')
+    y_train.to_csv('training_data_y.csv', index=False, sep = '|')
 
     train, val, y_train, y_val = model_selection.train_test_split(train, y_train, test_size=.1)
 
