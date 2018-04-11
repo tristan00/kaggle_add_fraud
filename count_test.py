@@ -36,13 +36,13 @@ from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 path = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
 start_time = time.time()
-MAX_ROUNDS = 400
+MAX_ROUNDS = 2000
 
 params = {
     'num_leaves': 31,
     'objective': 'binary',
     'min_data_in_leaf': 100,
-    'learning_rate': 0.1,
+    'learning_rate': 0.02,
     'feature_fraction': 1.0,
     'bagging_fraction': 0.8,
     'bagging_freq': 2,
@@ -517,7 +517,7 @@ def main_wo_val(reproccess = True):
 
     main_sub['is_attributed'] = main_sub.apply(lambda row: sum([row['is_attributed_l'], row['is_attributed_c'], row['is_attributed_x']])/3, axis = 1)
     main_sub = main_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    main_sub.to_csv('combined_sub.csv', index = False)
+    main_sub.to_csv('xcl_sub.csv', index = False)
     del main_sub
     gc.collect()
 
@@ -532,7 +532,7 @@ def main_wo_val(reproccess = True):
     xc_sub = sub.copy()
     xc_sub['is_attributed'] = xc_sub.apply(lambda row: sum([row['is_attributed_c'], row['is_attributed_x']])/2, axis = 1)
     xc_sub = xc_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    xc_sub.to_csv('xl_sub.csv', index = False)
+    xc_sub.to_csv('xc_sub.csv', index = False)
     del xc_sub
     gc.collect()
 
@@ -546,21 +546,21 @@ def main_wo_val(reproccess = True):
     l_sub = sub.copy()
     l_sub['is_attributed'] = l_sub.apply(lambda row: row['is_attributed_l'], axis = 1)
     l_sub = l_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    l_sub.to_csv('xl_sub.csv', index = False)
+    l_sub.to_csv('l_sub.csv', index = False)
     del l_sub
     gc.collect()
 
     x_sub = sub.copy()
     x_sub['is_attributed'] = x_sub.apply(lambda row:  row['is_attributed_x'], axis = 1)
     x_sub = x_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    x_sub.to_csv('xl_sub.csv', index = False)
+    x_sub.to_csv('x_sub.csv', index = False)
     del x_sub
     gc.collect()
 
     c_sub = sub.copy()
     c_sub['is_attributed'] = c_sub.apply(lambda row: row['is_attributed_c'], axis = 1)
     c_sub = c_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    c_sub.to_csv('cl_sub.csv', index = False)
+    c_sub.to_csv('c_sub.csv', index = False)
     del c_sub
     gc.collect()
 
