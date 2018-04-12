@@ -166,6 +166,20 @@ def get_autoencoder(df):
     return model
 
 
+def get_nn(df):
+    model = Sequential()
+    model.add(Dense(128, activation='elu', input_shape=(df.shape[1],)))
+    model.add(Dropout(.2))
+    model.add(Dense(128, activation='elu'))
+    model.add(Dropout(.2))
+    model.add(Dense(128, activation='elu'))
+    model.add(Dense(1, activation='elu'))
+    model.compile(loss='mse',
+                 optimizer=optimizers.RMSprop(),
+                 metrics=['mse'])
+    return model
+
+
 def add_outlier(df):
     nn_df = df.copy()
     nn_columns = nn_df.columns
@@ -349,18 +363,33 @@ def preproccess_df(df):
     return df
 
 
+def train_nn(train_x, train_y, test_x, test_y):
+
+    if 'device' in train_x.columns:
+        train_x_copy = train_x.drop(['device', 'os', 'channel', 'click_hour'], axis = 1)
+        test_x_copy = test_x.drop(['device', 'os', 'channel', 'click_hour'], axis = 1)
+    else:
+        train_x_copy = train_x.copy()
+        test_x_copy = test_x.copy()
+
+    nn = get_nn(train_x_copy)
+    nn.fit(train_x_copy, train_y)
+    return nn
+
+
 def train_lgbm(train_x, train_y, test_x, test_y):
     train_x = train_x.copy()
     train_y = train_y.copy()
-    train_x['device'] = train_x['device'].astype("category")
-    train_x['os'] = train_x['os'].astype("category")
-    train_x['channel'] = train_x['channel'].astype("category")
-    train_x['click_hour'] = train_x['click_hour'].astype("category")
+    if 'device' in train_x.columns:
+        train_x['device'] = train_x['device'].astype("category")
+        train_x['os'] = train_x['os'].astype("category")
+        train_x['channel'] = train_x['channel'].astype("category")
+        train_x['click_hour'] = train_x['click_hour'].astype("category")
 
-    test_x['device'] = test_x['device'].astype("category")
-    test_x['os'] = test_x['os'].astype("category")
-    test_x['channel'] = test_x['channel'].astype("category")
-    test_x['click_hour'] = test_x['click_hour'].astype("category")
+        test_x['device'] = test_x['device'].astype("category")
+        test_x['os'] = test_x['os'].astype("category")
+        test_x['channel'] = test_x['channel'].astype("category")
+        test_x['click_hour'] = test_x['click_hour'].astype("category")
 
     dtrain = lgb.Dataset(train_x, label=train_y)
     dval = lgb.Dataset(test_x, label=test_y, reference=dtrain)
@@ -392,36 +421,58 @@ def train_catboost(train_x, train_y, test_x, test_y):
 
 
 def train_xgb(train_x, train_y, test_x, test_y):
+    print(train_x.columns)
     train_x = train_x.copy()
     train_y = train_y.copy()
+    if 'device' in train_x.columns:
+        train_x['device'] = train_x['device'].astype("float")
+        train_x['os'] = train_x['os'].astype("float")
+        train_x['channel'] = train_x['channel'].astype("float")
+        train_x['click_hour'] = train_x['click_hour'].astype("float")
 
-    train_x['device'] = train_x['device'].astype("int")
-    train_x['os'] = train_x['os'].astype("int")
-    train_x['channel'] = train_x['channel'].astype("int")
-    train_x['click_hour'] = train_x['click_hour'].astype("int")
+        test_x['device'] = test_x['device'].astype("float")
+        test_x['os'] = test_x['os'].astype("float")
+        test_x['channel'] = test_x['channel'].astype("float")
+        test_x['click_hour'] = test_x['click_hour'].astype("float")
 
-    test_x['device'] = test_x['device'].astype("int")
-    test_x['os'] = test_x['os'].astype("int")
-    test_x['channel'] = test_x['channel'].astype("int")
-    test_x['click_hour'] = test_x['click_hour'].astype("int")
+        dtrain = xgb.DMatrix(train_x, train_y)
+        dvalid = xgb.DMatrix(test_x, test_y)
+        watchlist = [(dtrain, 'train'), (dvalid, 'valid')]
 
-    dtrain = xgb.DMatrix(train_x, train_y)
-    dvalid = xgb.DMatrix(test_x, test_y)
-    watchlist = [(dtrain, 'train'), (dvalid, 'valid')]
+        model = xgb.train(x_params, dtrain, 30, watchlist)
+        gc.collect()
+    else:
+        dtrain = xgb.DMatrix(train_x, train_y)
+        dvalid = xgb.DMatrix(test_x, test_y)
+        watchlist = [(dtrain, 'train'), (dvalid, 'valid')]
 
-    model = xgb.train(x_params, dtrain, 30, watchlist)
-    gc.collect()
+        model = xgb.train(x_params, dtrain, 30, watchlist)
+        gc.collect()
     return model
+
+
+def predict_nn(model, x, sub):
+    x = x.copy()
+    if 'device' in x.columns:
+        x_copy = x.drop(['device', 'os', 'channel', 'click_hour'], axis = 1)
+    else:
+        x_copy = x.copy()
+
+    sub['is_attributed_n'] = model.predict(x_copy)
+    return sub
 
 
 def predict_lgbm(model, x, sub):
     x = x.copy()
-    x['device'] = x['device'].astype("category")
-    x['os'] = x['os'].astype("category")
-    x['channel'] = x['channel'].astype("category")
-    x['click_hour'] = x['click_hour'].astype("category")
+    if 'device' in x.columns:
+        x['device'] = x['device'].astype("category")
+        x['os'] = x['os'].astype("category")
+        x['channel'] = x['channel'].astype("category")
+        x['click_hour'] = x['click_hour'].astype("category")
 
-    sub['is_attributed_l'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
+        sub['is_attributed_l'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
+    else:
+        sub['is_attributed'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
     return sub
 
 
@@ -432,22 +483,25 @@ def predict_catboost(model, x, sub):
     x['channel'] = x['channel'].astype("category")
     x['click_hour'] = x['click_hour'].astype("category")
 
-    a = model.predict(x)
     sub['is_attributed_c'] = model.predict(x)
     return sub
 
 
 def predict_xgb(model, x, sub):
     x = x.copy()
-    x['device'] = x['device'].astype("int")
-    x['os'] = x['os'].astype("int")
-    x['channel'] = x['channel'].astype("int")
-    x['click_hour'] = x['click_hour'].astype("int")
-
-    dtest = xgb.DMatrix(x)
-
-    sub['is_attributed_x'] = model.predict(dtest)
+    print(x.columns)
+    if 'device' in x.columns:
+        x['device'] = x['device'].astype("float")
+        x['os'] = x['os'].astype("float")
+        x['channel'] = x['channel'].astype("float")
+        x['click_hour'] = x['click_hour'].astype("float")
+        dtest = xgb.DMatrix(x)
+        sub['is_attributed_x'] = model.predict(dtest)
+    else:
+        dtest = xgb.DMatrix(x)
+        sub['is_attributed'] = model.predict(dtest)
     return sub
+
 
 
 
@@ -483,6 +537,23 @@ def main_wo_val(reproccess = True):
     x_model = train_xgb(train, y_train, val, y_val)
     gc.collect()
 
+    nn_model = train_nn(train, y_train, val, y_val)
+    gc.collect()
+
+    l2_input = val[['nn_score']]
+    l2_input = predict_lgbm(model, val, l2_input)
+    gc.collect()
+    l2_input = predict_catboost(cat_model, val, l2_input)
+    gc.collect()
+    l2_input = predict_xgb(x_model, val, l2_input)
+    gc.collect()
+    l2_input = predict_nn(nn_model, val, l2_input)
+    gc.collect()
+
+    train_2_x, val_2_x, train_2_y, val_2_y = model_selection.train_test_split(l2_input, y_val, test_size=.5)
+    l2_model = train_xgb(train_2_x, train_2_y, val_2_x, val_2_y)
+    gc.collect()
+
     columns = train.columns
     f_i = model.feature_importance(importance_type='split')
     f_i2 = model.feature_importance(importance_type='gain')
@@ -499,12 +570,15 @@ def main_wo_val(reproccess = True):
 
     sub = pd.DataFrame()
 
+
     test1 = pd.read_csv(path + "test.csv", dtype=init_dtype)
     test1 = preproccess_df(test1)
-    sub['click_id'] = test1['click_id']
+    sub = test1.copy()
+    sub[['click_id']] = sub[['click_id']]
 
     test1.drop('click_id', axis=1, inplace=True)
     test1 = add_outlier(test1)
+    sub[['nn_score']] = test1[['nn_score']]
     gc.collect()
     sub = predict_lgbm(model, test1, sub)
     gc.collect()
@@ -512,56 +586,19 @@ def main_wo_val(reproccess = True):
     gc.collect()
     sub = predict_xgb(x_model, test1, sub)
     gc.collect()
+    sub = predict_nn(nn_model, test1, sub)
+    gc.collect()
+
+    l2_input = sub[['nn_score', 'is_attributed_l', 'is_attributed_c', 'is_attributed_x', 'is_attributed_n']]
+    sub = predict_xgb(l2_model, l2_input, sub)
+
 
     main_sub = sub.copy()
+    main_sub = main_sub[['click_id', 'is_attributed']]
 
-    main_sub['is_attributed'] = main_sub.apply(lambda row: sum([row['is_attributed_l'], row['is_attributed_c'], row['is_attributed_x']])/3, axis = 1)
-    main_sub = main_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    main_sub.to_csv('xcl_sub.csv', index = False)
+
+    main_sub.to_csv('sub.csv', index = False)
     del main_sub
-    gc.collect()
-
-    xl_sub = sub.copy()
-
-    xl_sub['is_attributed'] = xl_sub.apply(lambda row: sum([row['is_attributed_l'], row['is_attributed_x']])/2, axis = 1)
-    xl_sub = xl_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    xl_sub.to_csv('xl_sub.csv', index = False)
-    del xl_sub
-    gc.collect()
-
-    xc_sub = sub.copy()
-    xc_sub['is_attributed'] = xc_sub.apply(lambda row: sum([row['is_attributed_c'], row['is_attributed_x']])/2, axis = 1)
-    xc_sub = xc_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    xc_sub.to_csv('xc_sub.csv', index = False)
-    del xc_sub
-    gc.collect()
-
-    lc_sub = sub.copy()
-    lc_sub['is_attributed'] = lc_sub.apply(lambda row: sum([row['is_attributed_l'], row['is_attributed_c']])/2, axis = 1)
-    lc_sub = lc_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    lc_sub.to_csv('cl_sub.csv', index = False)
-    del lc_sub
-    gc.collect()
-
-    l_sub = sub.copy()
-    l_sub['is_attributed'] = l_sub.apply(lambda row: row['is_attributed_l'], axis = 1)
-    l_sub = l_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    l_sub.to_csv('l_sub.csv', index = False)
-    del l_sub
-    gc.collect()
-
-    x_sub = sub.copy()
-    x_sub['is_attributed'] = x_sub.apply(lambda row:  row['is_attributed_x'], axis = 1)
-    x_sub = x_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    x_sub.to_csv('x_sub.csv', index = False)
-    del x_sub
-    gc.collect()
-
-    c_sub = sub.copy()
-    c_sub['is_attributed'] = c_sub.apply(lambda row: row['is_attributed_c'], axis = 1)
-    c_sub = c_sub.drop(['is_attributed_l', 'is_attributed_c', 'is_attributed_x'], axis=1)
-    c_sub.to_csv('c_sub.csv', index = False)
-    del c_sub
     gc.collect()
 
 
