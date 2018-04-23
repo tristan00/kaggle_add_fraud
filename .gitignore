@@ -6,3 +6,5 @@
 *.tsv
 *.tfevents
 *.json
+*.plk
+*.pyc

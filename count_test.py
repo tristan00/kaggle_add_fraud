@@ -27,11 +27,14 @@ from keras import backend as K
 import os
 import itertools
 import pandas as pd
+import pickle
 import gc
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-
+from skopt.space import Integer, Real
+from skopt import BayesSearchCV
+from sklearn.model_selection import StratifiedKFold
 
 path = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
@@ -42,7 +45,7 @@ params = {
     'num_leaves': 31,
     'objective': 'binary',
     'min_data_in_leaf': 100,
-    'learning_rate': 0.02,
+    'learning_rate': 0.01,
     'feature_fraction': 1.0,
     'bagging_fraction': 0.8,
     'bagging_freq': 2,
@@ -76,38 +79,6 @@ init_dtype = {
         'is_attributed': 'uint8',
         }
 
-def report(results, n_top=100):
-    res_df = []
-    for i in range(1, n_top + 1):
-        candidates = np.flatnonzero(results['rank_test_score'] == i)
-
-
-        for candidate in candidates:
-            print("Model with rank: {0}".format(i))
-            print("Mean validation score: {0:.3f} (std: {1:.3f})".format(
-                  results['mean_test_score'][candidate],
-                  results['std_test_score'][candidate]))
-            print("Parameters: {0}".format(results['params'][candidate]))
-            print("")
-            res_df.append({'mean': results['mean_test_score'][candidate],
-                           'std':results['std_test_score'][candidate],
-                           'rank':i,
-                           'Parameters':results['params'][candidate],
-                           'param_num_leaves':results['param_num_leaves'][candidate],
-                           'param_num_iterations':results['param_num_iterations'][candidate],
-                           'param_min_data_in_leaf': results['param_min_data_in_leaf'][candidate],
-                           'param_max_bin': results['param_max_bin'][candidate],
-                           'param_learning_rate': results['param_learning_rate'][candidate],
-                           'param_boosting_type': results['param_boosting_type'][candidate],
-                           'param_num_iterations': results['num_iterations'][candidate],
-                           'param_feature_fraction': results['feature_fraction'][candidate],
-                           'param_bagging_freq': results['bagging_fraction'][candidate]
-
-
-                           })
-
-    res_df = pd.DataFrame.from_dict(res_df)
-    res_df.to_csv('gridsearch_results.csv', index = False)
 
 
 def tune_lgbm():
@@ -273,7 +244,7 @@ def time_till_next(df, columns, name):
     df = df.drop(['median', 'std'], axis = 1)
     return df
 
-def preproccess_df(df):
+def preproccess_df(df, train = True):
     print(df.shape, df.columns)
     df['counting_column'] = 1
 
@@ -288,66 +259,35 @@ def preproccess_df(df):
 
     df = df.sort_values(by=['click_time'])
 
-    df['click_hour'] = df['click_hour'].apply(lambda x: 5 if x == 6 else 10 if x == 11 else 14)
+    if not train:
+        df['click_hour'] = df['click_hour'].apply(lambda x: 5 if x == 6 else 10 if x == 11 else 14)
 
 
     print('time added', df.shape)
     #
 
 
-    possible_names = ['ip', 'device', 'os', 'channel', 'click_day']
 
-    # for l in range(len(possible_names)):
-    #     combinations = itertools.combinations(possible_names, l+1)
-    #     for i in combinations:
-    #         if 'click_day' not in i or len(i) == 1 or len(i) == 5:
-    #             continue
-    #         print(i, time.time() - start_time)
-    #         df = time_since_last(df, list(i), '_'.join(i)+'_next')
-    #         gc.collect()
-    #         # df = time_till_next(df, list(i), '_'.join(i) + '_last')
-    #         # gc.collect()
-
-
-    rank_list = [['ip', 'os', 'device', 'channel', 'click_day'],
-                 ['ip', 'device', 'os', 'click_day']]
+    rank_list = [['ip', 'os', 'device', 'channel', 'click_day', 'click_hour'],
+                 ['ip', 'device', 'os', 'click_day', 'click_hour']]
     for i in rank_list:
-        df = time_since_last(df, list(i), '_'.join(i) + '_last')
-        gc.collect()
-        df = time_till_next(df, list(i), '_'.join(i) + '_next')
-        gc.collect()
         df = count_df(df, list(i), '_'.join(i) + '_count')
         gc.collect()
 
 
     rank_list = [['ip', 'click_day'],
-                 ['ip', 'device', 'click_day'],
-                 ['ip', 'os', 'click_day'],
-                 ['device', 'os', 'click_day'],
                  ['ip', 'device', 'channel', 'click_day'],
                  ['channel', 'click_day'],
                  ['ip', 'device', 'os', 'click_day'],
                  ['ip', 'channel', 'click_day'],
-                 ['device', 'os', 'channel', 'click_day'],
+                 ['device', 'os', 'channel', 'app', 'click_day'],
                  ['os', 'channel', 'click_day'],
-                 ['device', 'click_day'],
                  ['device', 'channel', 'click_day'],
-                 ['os', 'click_day'],
                  ['app', 'channel', 'click_day']]
     for i in rank_list:
         df = rank_df(df, list(i), '_'.join(i) + '_rank')
         df = df.sort_values(by=['click_time'])
         gc.collect()
-
-    # count_lists = [
-    #             ['ip', 'device', 'os', 'channel', 'app'],
-    #             ['click_hour', 'click_day', 'ip', 'device', 'os'],
-    #                ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel'],
-    #                ['click_hour', 'click_day', 'ip', 'device', 'os', 'channel', 'app']]
-    #
-    # print(time.time() - start_time)
-    # for i in count_lists:
-    #     df = rank_df(df, list(i), '_'.join(i) + '_rank')
 
     df['device'] = df['device'].astype('int')
     df['os'] = df['os'].astype('int')
@@ -381,15 +321,15 @@ def train_lgbm(train_x, train_y, test_x, test_y):
     train_x = train_x.copy()
     train_y = train_y.copy()
     if 'device' in train_x.columns:
-        train_x['device'] = train_x['device'].astype("category")
-        train_x['os'] = train_x['os'].astype("category")
-        train_x['channel'] = train_x['channel'].astype("category")
-        train_x['click_hour'] = train_x['click_hour'].astype("category")
+        train_x['device'] = train_x['device'].astype("int")
+        train_x['os'] = train_x['os'].astype("int")
+        train_x['channel'] = train_x['channel'].astype("int")
+        train_x['click_hour'] = train_x['click_hour'].astype("int")
 
-        test_x['device'] = test_x['device'].astype("category")
-        test_x['os'] = test_x['os'].astype("category")
-        test_x['channel'] = test_x['channel'].astype("category")
-        test_x['click_hour'] = test_x['click_hour'].astype("category")
+        test_x['device'] = test_x['device'].astype("int")
+        test_x['os'] = test_x['os'].astype("int")
+        test_x['channel'] = test_x['channel'].astype("int")
+        test_x['click_hour'] = test_x['click_hour'].astype("int")
 
     dtrain = lgb.Dataset(train_x, label=train_y)
     dval = lgb.Dataset(test_x, label=test_y, reference=dtrain)
@@ -465,10 +405,10 @@ def predict_nn(model, x, sub):
 def predict_lgbm(model, x, sub):
     x = x.copy()
     if 'device' in x.columns:
-        x['device'] = x['device'].astype("category")
-        x['os'] = x['os'].astype("category")
-        x['channel'] = x['channel'].astype("category")
-        x['click_hour'] = x['click_hour'].astype("category")
+        x['device'] = x['device'].astype("int")
+        x['os'] = x['os'].astype("int")
+        x['channel'] = x['channel'].astype("int")
+        x['click_hour'] = x['click_hour'].astype("int")
 
         sub['is_attributed_l'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
     else:
@@ -503,13 +443,96 @@ def predict_xgb(model, x, sub):
     return sub
 
 
+def optimize_lgbm():
+
+    train = pd.read_csv(path + 'proccessed_train2.csv', sep='|')
+    train = train.sample(frac = 1.0)
+    y = train['is_attributed']
+    x = train.drop(['is_attributed', 'attributed_time'], axis=1)
+    del train
+
+    def status_print(optim_result):
+        """Status callback durring bayesian hyperparameter search"""
+
+        # Get all the models tested so far in DataFrame format
+        all_models = pd.DataFrame(bayes_cv_tuner.cv_results_)
+
+        # Get current parameters and the best parameters
+        best_params = pd.Series(bayes_cv_tuner.best_params_)
+        print('Model #{}\nBest ROC-AUC: {}\nBest params: {}\n'.format(
+            len(all_models),
+            np.round(bayes_cv_tuner.best_score_, 4),
+            bayes_cv_tuner.best_params_
+        ))
+
+        # Save all model results
+        clf_name = bayes_cv_tuner.estimator.__class__.__name__
+        all_models.to_csv(clf_name + "_cv_results.csv")
+
+
+    if 'device' in x.columns:
+        x['device'] = x['device'].astype("category")
+        x['os'] = x['os'].astype("category")
+        x['channel'] = x['channel'].astype("category")
+        x['click_hour'] = x['click_hour'].astype("category")
+
+    iterations = 35
+    bayes_cv_tuner = BayesSearchCV(
+        estimator=lgb.LGBMRegressor(
+            objective='binary',
+            metric='auc',
+            n_jobs=6,
+            verbose=1,
+            categorical_feature='auto'
+        ),
+        search_spaces={
+            'learning_rate': (0.001, 1.0, 'log-uniform'),
+            'num_leaves': (2, 300),
+            'max_depth': (2, 50),
+            'min_data_in_leaf': (1, 50),
+            'max_bin': (100, 1000),
+            'subsample': (0.01, 1.0, 'uniform'),
+            'subsample_freq': (0, 10),
+            'colsample_bytree': (0.01, 1.0, 'uniform'),
+            'min_child_weight': (1, 10),
+            'subsample_for_bin': (100000, 500000),
+            'reg_lambda': (1e-9, 1000, 'log-uniform'),
+            'reg_alpha': (1e-9, 1.0, 'log-uniform'),
+            'scale_pos_weight': (1e-6, 500, 'log-uniform'),
+            'n_estimators': (50, 150),
+        },
+        scoring='roc_auc',
+        cv=StratifiedKFold(
+            n_splits=3,
+            shuffle=True,
+        ),
+
+        n_iter=iterations,
+        verbose=3,
+        refit=True,
+    )
+
+
+
+    res = bayes_cv_tuner.fit(x, y, callback=status_print)
+
+    clf = lgb.LGBMRegressor(**res.best_params_)
+    clf.fit(x, y)
+
+    sub = pd.DataFrame()
+    test = pd.read_csv(path + 'proccessed_test2.csv', sep='|')
+    sub['click_id'] = test['click_id']
+    test.drop('click_id', axis=1, inplace=True)
+    sub['is_attributed'] = clf.predict(x)
+
+    sub.to_csv('sub.csv', index=False)
 
 
 def main_wo_val(reproccess = True):
     try:
         train = pd.read_csv(path + 'proccessed_train2.csv', sep = '|')
     except:
-        df = pd.read_csv(path + "train2.csv", dtype=init_dtype)
+        df = pd.read_csv(path + "train.csv", dtype=init_dtype)
         train = preproccess_df(df)
         gc.collect()
 
@@ -519,40 +542,20 @@ def main_wo_val(reproccess = True):
     full_y = train['is_attributed']
     train.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
 
-    full_data = add_outlier(train)
+    full_data = train.copy()
+    del train
+    # full_data = add_outlier(train)
     gc.collect()
 
-    full_data.to_csv('training_data.csv', index=False, sep = '|')
-    full_y.to_csv('training_data_y.csv', index=False, sep = '|')
+    # full_data.to_csv('training_data.csv', index=False, sep = '|')
+    # full_y.to_csv('training_data_y.csv', index=False, sep = '|')
 
-    train, val, y_train, y_val = model_selection.train_test_split(full_data, full_y, test_size=.1)
+    train, val, y_train, y_val = model_selection.train_test_split(full_data, full_y, test_size=.05)
     gc.collect()
 
     model = train_lgbm(train, y_train, val, y_val)
     gc.collect()
 
-    cat_model = train_catboost(train, y_train, val, y_val)
-    gc.collect()
-
-    x_model = train_xgb(train, y_train, val, y_val)
-    gc.collect()
-
-    nn_model = train_nn(train, y_train, val, y_val)
-    gc.collect()
-
-    l2_input = val[['nn_score']]
-    l2_input = predict_lgbm(model, val, l2_input)
-    gc.collect()
-    l2_input = predict_catboost(cat_model, val, l2_input)
-    gc.collect()
-    l2_input = predict_xgb(x_model, val, l2_input)
-    gc.collect()
-    l2_input = predict_nn(nn_model, val, l2_input)
-    gc.collect()
-
-    train_2_x, val_2_x, train_2_y, val_2_y = model_selection.train_test_split(l2_input, y_val, test_size=.5)
-    l2_model = train_xgb(train_2_x, train_2_y, val_2_x, val_2_y)
-    gc.collect()
 
     columns = train.columns
     f_i = model.feature_importance(importance_type='split')
@@ -568,43 +571,21 @@ def main_wo_val(reproccess = True):
     gc.collect()
 
 
-    sub = pd.DataFrame()
-
-
     test1 = pd.read_csv(path + "test.csv", dtype=init_dtype)
-    test1 = preproccess_df(test1)
-    sub = test1.copy()
-    sub[['click_id']] = sub[['click_id']]
+    test1 = preproccess_df(test1, train=False)
 
+    sub = pd.DataFrame()
+    sub['click_id'] = test1['click_id']
     test1.drop('click_id', axis=1, inplace=True)
-    test1 = add_outlier(test1)
-    sub[['nn_score']] = test1[['nn_score']]
-    gc.collect()
-    sub = predict_lgbm(model, test1, sub)
-    gc.collect()
-    sub = predict_catboost(cat_model, test1, sub)
-    gc.collect()
-    sub = predict_xgb(x_model, test1, sub)
-    gc.collect()
-    sub = predict_nn(nn_model, test1, sub)
-    gc.collect()
+    sub['is_attributed'] = model.predict(test1, num_iteration=model.best_iteration or MAX_ROUNDS)
+    sub.to_csv('lgb_sub.csv', index=False)
 
-    l2_input = sub[['nn_score', 'is_attributed_l', 'is_attributed_c', 'is_attributed_x', 'is_attributed_n']]
-    sub = predict_xgb(l2_model, l2_input, sub)
-
-
-    main_sub = sub.copy()
-    main_sub = main_sub[['click_id', 'is_attributed']]
-
-
-    main_sub.to_csv('sub.csv', index = False)
-    del main_sub
-    gc.collect()
 
 
 if __name__ == '__main__':
     main_wo_val(reproccess=True)
     #tune_lgbm()
+    # optimize_lgbm()
 
 
 
