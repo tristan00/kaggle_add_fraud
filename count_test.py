@@ -266,8 +266,6 @@ def preproccess_df(df, train = True):
     print('time added', df.shape)
     #
 
-
-
     rank_list = [['ip', 'os', 'device', 'channel', 'click_day', 'click_hour'],
                  ['ip', 'device', 'os', 'click_day', 'click_hour'],
                  ['ip', 'os', 'device', 'channel', 'click_day'],
@@ -276,25 +274,18 @@ def preproccess_df(df, train = True):
         df = count_df(df, list(i), '_'.join(i) + '_count')
         gc.collect()
 
-
     rank_list = [['ip', 'click_day'],
-                 ['ip', 'click_day', 'click_hour'],
                  ['ip', 'device', 'channel', 'click_day'],
                  ['ip', 'device', 'channel', 'click_day', 'click_hour'],
-                 ['channel', 'click_day'],
                  ['channel', 'click_day', 'click_hour'],
                  ['ip', 'device', 'os', 'click_day'],
                  ['ip', 'device', 'os', 'click_day', 'click_hour'],
-                 ['ip', 'channel', 'click_day'],
                  ['device', 'os', 'channel', 'app', 'click_day'],
                  ['os', 'channel', 'click_day'],
                  ['device', 'channel', 'click_day'],
-                 ['app', 'channel', 'click_day'],
-                 ['app', 'channel', 'click_day', 'click_hour'],
-                 ['app', 'channel', 'click_hour']]
+                 ['app', 'channel', 'click_day', 'click_hour']]
     for i in rank_list:
         df = rank_df(df, list(i), '_'.join(i) + '_rank')
-        df = df.sort_values(by=['click_time'])
         gc.collect()
 
     df['device'] = df['device'].astype('int')
@@ -329,15 +320,15 @@ def train_lgbm(train_x, train_y, test_x, test_y):
     train_x = train_x.copy()
     train_y = train_y.copy()
     if 'device' in train_x.columns:
-        train_x['device'] = train_x['device'].astype("int")
-        train_x['os'] = train_x['os'].astype("int")
-        train_x['channel'] = train_x['channel'].astype("int")
-        train_x['click_hour'] = train_x['click_hour'].astype("int")
+        train_x['device'] = train_x['device'].astype("category")
+        train_x['os'] = train_x['os'].astype("category")
+        train_x['channel'] = train_x['channel'].astype("category")
+        train_x['click_hour'] = train_x['click_hour'].astype("category")
 
-        test_x['device'] = test_x['device'].astype("int")
-        test_x['os'] = test_x['os'].astype("int")
-        test_x['channel'] = test_x['channel'].astype("int")
-        test_x['click_hour'] = test_x['click_hour'].astype("int")
+        test_x['device'] = test_x['device'].astype("category")
+        test_x['os'] = test_x['os'].astype("category")
+        test_x['channel'] = test_x['channel'].astype("category")
+        test_x['click_hour'] = test_x['click_hour'].astype("category")
 
     dtrain = lgb.Dataset(train_x, label=train_y)
     dval = lgb.Dataset(test_x, label=test_y, reference=dtrain)
@@ -413,10 +404,10 @@ def predict_nn(model, x, sub):
 def predict_lgbm(model, x, sub):
     x = x.copy()
     if 'device' in x.columns:
-        x['device'] = x['device'].astype("int")
-        x['os'] = x['os'].astype("int")
-        x['channel'] = x['channel'].astype("int")
-        x['click_hour'] = x['click_hour'].astype("int")
+        x['device'] = x['device'].astype("category")
+        x['os'] = x['os'].astype("category")
+        x['channel'] = x['channel'].astype("category")
+        x['click_hour'] = x['click_hour'].astype("category")
 
         sub['is_attributed_l'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
     else:
@@ -538,6 +529,8 @@ def optimize_lgbm():
 
 def main_wo_val(reproccess = True):
     try:
+        if reproccess:
+            raise Exception()
         train = pd.read_csv(path + 'proccessed_train2.csv', sep = '|')
     except:
         df = pd.read_csv(path + "train.csv", dtype=init_dtype)
@@ -555,10 +548,8 @@ def main_wo_val(reproccess = True):
     # full_data = add_outlier(train)
     gc.collect()
 
-    # full_data.to_csv('training_data.csv', index=False, sep = '|')
-    # full_y.to_csv('training_data_y.csv', index=False, sep = '|')
-
     train, val, y_train, y_val = model_selection.train_test_split(full_data, full_y, test_size=.05)
+    del full_data, full_y
     gc.collect()
 
     model = train_lgbm(train, y_train, val, y_val)
@@ -574,10 +565,8 @@ def main_wo_val(reproccess = True):
     fi_df.loc[len(fi_df)] = f_i2
     fi_df.to_csv('f2.csv', index=False)
 
-
-    del y_train, train, full_data, full_y
+    del train, val, y_train, y_val
     gc.collect()
-
 
     test1 = pd.read_csv(path + "test.csv", dtype=init_dtype)
     test1 = preproccess_df(test1, train=False)
@@ -585,9 +574,8 @@ def main_wo_val(reproccess = True):
     sub = pd.DataFrame()
     sub['click_id'] = test1['click_id']
     test1.drop('click_id', axis=1, inplace=True)
-    sub['is_attributed'] = model.predict(test1, num_iteration=model.best_iteration or MAX_ROUNDS)
+    sub = predict_lgbm(model, test1, sub)
     sub.to_csv('lgb_sub.csv', index=False)
-
 
 
 if __name__ == '__main__':
