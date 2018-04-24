@@ -39,7 +39,7 @@ from sklearn.model_selection import StratifiedKFold
 path = r'C:/Users/tdelforge/Documents/Kaggle_datasets/fraud/'
 
 start_time = time.time()
-MAX_ROUNDS = 2000
+MAX_ROUNDS = 5000
 
 params = {
     'num_leaves': 31,
@@ -269,21 +269,29 @@ def preproccess_df(df, train = True):
 
 
     rank_list = [['ip', 'os', 'device', 'channel', 'click_day', 'click_hour'],
-                 ['ip', 'device', 'os', 'click_day', 'click_hour']]
+                 ['ip', 'device', 'os', 'click_day', 'click_hour'],
+                 ['ip', 'os', 'device', 'channel', 'click_day'],
+                 ['ip', 'device', 'os', 'click_day']]
     for i in rank_list:
         df = count_df(df, list(i), '_'.join(i) + '_count')
         gc.collect()
 
 
     rank_list = [['ip', 'click_day'],
+                 ['ip', 'click_day', 'click_hour'],
                  ['ip', 'device', 'channel', 'click_day'],
+                 ['ip', 'device', 'channel', 'click_day', 'click_hour'],
                  ['channel', 'click_day'],
+                 ['channel', 'click_day', 'click_hour'],
                  ['ip', 'device', 'os', 'click_day'],
+                 ['ip', 'device', 'os', 'click_day', 'click_hour'],
                  ['ip', 'channel', 'click_day'],
                  ['device', 'os', 'channel', 'app', 'click_day'],
                  ['os', 'channel', 'click_day'],
                  ['device', 'channel', 'click_day'],
-                 ['app', 'channel', 'click_day']]
+                 ['app', 'channel', 'click_day'],
+                 ['app', 'channel', 'click_day', 'click_hour'],
+                 ['app', 'channel', 'click_hour']]
     for i in rank_list:
         df = rank_df(df, list(i), '_'.join(i) + '_rank')
         df = df.sort_values(by=['click_time'])
