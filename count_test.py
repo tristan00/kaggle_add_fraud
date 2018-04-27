@@ -6,6 +6,7 @@ from sklearn import ensemble
 from sklearn.metrics import roc_auc_score, mean_squared_error
 from keras.models import Model, load_model, save_model
 import lightgbm as lgb
+import statistics
 import datetime
 import math
 import tensorflow as tf
@@ -45,7 +46,7 @@ params = {
     'num_leaves': 31,
     'objective': 'binary',
     'min_data_in_leaf': 100,
-    'learning_rate': 0.01,
+    'learning_rate': 0.05,
     'feature_fraction': 1.0,
     'bagging_fraction': 0.8,
     'bagging_freq': 2,
@@ -83,8 +84,14 @@ init_dtype = {
 
 def tune_lgbm():
     clf = lgb.LGBMClassifier()
-    train = pd.read_csv('training_data.csv', sep='|')
-    y_train = pd.read_csv('training_data_y.csv', sep='|')
+    df = pd.read_csv(path + "train.csv", dtype=init_dtype)
+    train = preproccess_df(df, train = False)
+    gc.collect()
+
+    train = train.sample(n = 30000000)
+
+    train_y = train['is_attributed']
+    train.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
 
     input_parameter_dict = {'num_leaves': [15, 31, 63, 128],
                             'min_data_in_leaf': [50, 100, 150],
@@ -244,28 +251,8 @@ def time_till_next(df, columns, name):
     df = df.drop(['median', 'std'], axis = 1)
     return df
 
-def preproccess_df(df, train = True):
-    print(df.shape, df.columns)
-    df['counting_column'] = 1
 
-    df['datetime'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S'))
-    df['click_hour'] = df['datetime'].apply(lambda x: x.hour).astype('uint8')
-    df['click_day'] = df['datetime'].apply(lambda x: x.day).astype('uint8')
-    df['click_second'] = df['datetime'].apply(lambda x: x.second).astype('uint8')
-    df['click_minute'] = df['datetime'].apply(lambda x: x.minute).astype('uint8')
-    #df['click_minute'] /= 60 #TODO: change to 60 on new models
-    df['click_time'] = df['datetime'].apply(lambda x: x.timestamp())
-    df = df.drop(['datetime'], axis = 1)
-
-    df = df.sort_values(by=['click_time'])
-
-    if not train:
-        df['click_hour'] = df['click_hour'].apply(lambda x: 5 if x == 6 else 10 if x == 11 else 14)
-
-
-    print('time added', df.shape)
-    #
-
+def add_features(df):
     rank_list = [['ip', 'os', 'device', 'channel', 'click_day', 'click_hour'],
                  ['ip', 'device', 'os', 'click_day', 'click_hour'],
                  ['ip', 'os', 'device', 'channel', 'click_day'],
@@ -277,13 +264,13 @@ def preproccess_df(df, train = True):
     rank_list = [['ip', 'click_day'],
                  ['ip', 'device', 'channel', 'click_day'],
                  ['ip', 'device', 'channel', 'click_day', 'click_hour'],
-                 ['channel', 'click_day', 'click_hour'],
                  ['ip', 'device', 'os', 'click_day'],
                  ['ip', 'device', 'os', 'click_day', 'click_hour'],
                  ['device', 'os', 'channel', 'app', 'click_day'],
-                 ['os', 'channel', 'click_day'],
                  ['device', 'channel', 'click_day'],
-                 ['app', 'channel', 'click_day', 'click_hour']]
+                 ['app', 'channel', 'click_day', 'click_hour'],
+                 ['ip', 'device', 'os', 'app', 'click_day', 'click_hour'],
+                 ['ip', 'device', 'os', 'channel', 'click_day', 'click_hour']]
     for i in rank_list:
         df = rank_df(df, list(i), '_'.join(i) + '_rank')
         gc.collect()
@@ -293,6 +280,38 @@ def preproccess_df(df, train = True):
     df['channel'] = df['channel'].astype('int')
     df['click_hour'] = df['click_hour'].astype('int')
     df = df.drop(['ip','click_time', 'counting_column', 'click_day', 'click_day'], axis=1)
+
+    return df
+
+def preproccess_df(df, train = True, val_day = 7):
+    print(df.shape, df.columns)
+    df['counting_column'] = 1
+
+    df['datetime'] = df['click_time'].apply(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S'))
+    df['click_day'] = df['datetime'].apply(lambda x: x.day).astype('uint8')
+    df['click_hour'] = df['datetime'].apply(lambda x: x.hour).astype('uint8')
+    df['click_second'] = df['datetime'].apply(lambda x: x.second).astype('uint8')
+    df['click_minute'] = df['datetime'].apply(lambda x: x.minute).astype('uint8')
+    #df['click_minute'] /= 60 #TODO: change to 60 on new models
+    df['click_time'] = df['datetime'].apply(lambda x: x.timestamp())
+    df = df.drop(['datetime'], axis = 1)
+
+    df = df.sort_values(by=['click_time'])
+
+    if train:
+        train = df[df['click_day'] != val_day]
+        val = df[df['click_day'] == val_day]
+        #
+        # if min(train.shape) == 0:
+        #     train = val.sample(frac = .5)
+        print(train.shape, val.shape)
+        train = add_features(train)
+        val = add_features(val)
+
+        return train, val
+    if not train:
+        df['click_hour'] = df['click_hour'].apply(lambda x: 5 if x == 6 else 10 if x == 11 else 14)
+        return add_features(df)
 
 
     print(df.shape)
@@ -409,7 +428,7 @@ def predict_lgbm(model, x, sub):
         x['channel'] = x['channel'].astype("category")
         x['click_hour'] = x['click_hour'].astype("category")
 
-        sub['is_attributed_l'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
+        sub['is_attributed'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
     else:
         sub['is_attributed'] = model.predict(x, num_iteration=model.best_iteration or MAX_ROUNDS)
     return sub
@@ -444,12 +463,15 @@ def predict_xgb(model, x, sub):
 
 def optimize_lgbm():
 
-    train = pd.read_csv(path + 'proccessed_train2.csv', sep='|')
-    train = train.sample(frac = 1.0)
+    df = pd.read_csv(path + "train.csv", dtype=init_dtype)
+    train = preproccess_df(df, train = False)
+    gc.collect()
+    train = train.sample(n = 30000000)
+    gc.collect()
     y = train['is_attributed']
     x = train.drop(['is_attributed', 'attributed_time'], axis=1)
     del train
-
+    gc.collect()
     def status_print(optim_result):
         """Status callback durring bayesian hyperparameter search"""
 
@@ -468,14 +490,15 @@ def optimize_lgbm():
         clf_name = bayes_cv_tuner.estimator.__class__.__name__
         all_models.to_csv(clf_name + "_cv_results.csv")
 
-
+    gc.collect()
     if 'device' in x.columns:
         x['device'] = x['device'].astype("category")
         x['os'] = x['os'].astype("category")
         x['channel'] = x['channel'].astype("category")
         x['click_hour'] = x['click_hour'].astype("category")
+    gc.collect()
 
-    iterations = 35
+    iterations = 50
     bayes_cv_tuner = BayesSearchCV(
         estimator=lgb.LGBMRegressor(
             objective='binary',
@@ -497,7 +520,7 @@ def optimize_lgbm():
             'subsample_for_bin': (100000, 500000),
             'reg_lambda': (1e-9, 1000, 'log-uniform'),
             'reg_alpha': (1e-9, 1.0, 'log-uniform'),
-            'scale_pos_weight': (1e-6, 500, 'log-uniform'),
+            'scale_pos_weight': (300, 500, 'log-uniform'),
             'n_estimators': (50, 150),
         },
         scoring='roc_auc',
@@ -515,46 +538,25 @@ def optimize_lgbm():
 
     res = bayes_cv_tuner.fit(x, y, callback=status_print)
 
-    clf = lgb.LGBMRegressor(**res.best_params_)
-    clf.fit(x, y)
-
-    sub = pd.DataFrame()
-    test = pd.read_csv(path + 'proccessed_test2.csv', sep='|')
-    sub['click_id'] = test['click_id']
-    test.drop('click_id', axis=1, inplace=True)
-    sub['is_attributed'] = clf.predict(x)
-
-    sub.to_csv('sub.csv', index=False)
+    print(res.best_params_)
 
 
-def main_wo_val(reproccess = True):
-    try:
-        if reproccess:
-            raise Exception()
-        train = pd.read_csv(path + 'proccessed_train2.csv', sep = '|')
-    except:
-        df = pd.read_csv(path + "train.csv", dtype=init_dtype)
-        train = preproccess_df(df)
-        gc.collect()
 
-        train.to_csv(path + 'proccessed_train2.csv', index=False, sep='|')
+def main_wo_val(val_day = 7, reproccess = True):
+    df = pd.read_csv(path + "train.csv", dtype=init_dtype)
+    train, val = preproccess_df(df, val_day = val_day)
+    gc.collect()
 
     train = train.sample(frac = 1.0)
-    full_y = train['is_attributed']
+    val = val.sample(frac = 1.0)
+
+    train_y = train['is_attributed']
+    val_y = val['is_attributed']
     train.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
+    val.drop(['is_attributed', 'attributed_time'], axis=1, inplace=True)
 
-    full_data = train.copy()
-    del train
-    # full_data = add_outlier(train)
+    model = train_lgbm(train, train_y, val, val_y)
     gc.collect()
-
-    train, val, y_train, y_val = model_selection.train_test_split(full_data, full_y, test_size=.05)
-    del full_data, full_y
-    gc.collect()
-
-    model = train_lgbm(train, y_train, val, y_val)
-    gc.collect()
-
 
     columns = train.columns
     f_i = model.feature_importance(importance_type='split')
@@ -565,7 +567,7 @@ def main_wo_val(reproccess = True):
     fi_df.loc[len(fi_df)] = f_i2
     fi_df.to_csv('f2.csv', index=False)
 
-    del train, val, y_train, y_val
+    del train, val, train_y, val_y
     gc.collect()
 
     test1 = pd.read_csv(path + "test.csv", dtype=init_dtype)
@@ -575,12 +577,54 @@ def main_wo_val(reproccess = True):
     sub['click_id'] = test1['click_id']
     test1.drop('click_id', axis=1, inplace=True)
     sub = predict_lgbm(model, test1, sub)
-    sub.to_csv('lgb_sub.csv', index=False)
+    sub.to_csv('lgb_sub{0}.csv'.format(val_day), index=False)
+
+
+def main_ensemble():
+    # for i in range(7, 10):
+    #     main_wo_val(val_day=i)
+    #     gc.collect()
+
+    #mean
+    df = pd.DataFrame()
+    for i in range(7, 10):
+
+        next_df = pd.read_csv('lgb_sub{0}.csv'.format(i))
+        next_df['is_attributed_{0}'.format(i)] = next_df['is_attributed']
+        next_df.drop('is_attributed', axis = 1, inplace=True)
+        if min(df.shape) == 0:
+            df = next_df.copy()
+        else:
+            df = df.merge(next_df, how = 'outer', on = 'click_id', suffixes=('', '_' + str(i)))
+
+    df = df.fillna(0)
+    df['is_attributed'] = df.apply(lambda x: (x['is_attributed_7'] + x['is_attributed_8'] + x['is_attributed_9'])/3, axis = 1)
+    df.drop(['is_attributed_7','is_attributed_8','is_attributed_9'], axis=1, inplace=True)
+    df.to_csv('lgb_sub_mean.csv', index=False)
+
+
+    #median
+    df = pd.DataFrame()
+    for i in range(7, 10):
+
+        next_df = pd.read_csv('lgb_sub{0}.csv'.format(i))
+        next_df['is_attributed_{0}'.format(i)] = next_df['is_attributed']
+        next_df.drop('is_attributed', axis = 1, inplace=True)
+        if min(df.shape) == 0:
+            df = next_df.copy()
+        else:
+            df = df.merge(next_df, how = 'outer', on = 'click_id', suffixes=('', '_' + str(i)))
+
+    df = df.fillna(0)
+    df['is_attributed'] = df.apply(lambda x: statistics.median([x['is_attributed_7'], x['is_attributed_8'], x['is_attributed_9']]), axis = 1)
+    df.drop(['is_attributed_7','is_attributed_8','is_attributed_9'], axis=1, inplace=True)
+    df.to_csv('lgb_sub_median.csv', index=False)
 
 
 if __name__ == '__main__':
-    main_wo_val(reproccess=True)
-    #tune_lgbm()
+    # main_ensemble()
+    # main_wo_val(reproccess=True)
+    optimize_lgbm()
     # optimize_lgbm()
 
 
