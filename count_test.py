@@ -466,7 +466,7 @@ def optimize_lgbm():
     df = pd.read_csv(path + "train.csv", dtype=init_dtype)
     train = preproccess_df(df, train = False)
     gc.collect()
-    train = train.sample(n = 30000000)
+    train = train.sample(n = 50000000)
     gc.collect()
     y = train['is_attributed']
     x = train.drop(['is_attributed', 'attributed_time'], axis=1)
@@ -498,7 +498,7 @@ def optimize_lgbm():
         x['click_hour'] = x['click_hour'].astype("category")
     gc.collect()
 
-    iterations = 50
+    iterations = 100
     bayes_cv_tuner = BayesSearchCV(
         estimator=lgb.LGBMRegressor(
             objective='binary',
@@ -512,7 +512,7 @@ def optimize_lgbm():
             'num_leaves': (2, 300),
             'max_depth': (2, 50),
             'min_data_in_leaf': (1, 50),
-            'max_bin': (100, 1000),
+            'max_bin': (100, 2000),
             'subsample': (0.01, 1.0, 'uniform'),
             'subsample_freq': (0, 10),
             'colsample_bytree': (0.01, 1.0, 'uniform'),
@@ -521,7 +521,7 @@ def optimize_lgbm():
             'reg_lambda': (1e-9, 1000, 'log-uniform'),
             'reg_alpha': (1e-9, 1.0, 'log-uniform'),
             'scale_pos_weight': (300, 500, 'log-uniform'),
-            'n_estimators': (50, 150),
+            'n_estimators': (50, 300),
         },
         scoring='roc_auc',
         cv=StratifiedKFold(
